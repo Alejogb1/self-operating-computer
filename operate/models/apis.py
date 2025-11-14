@@ -18,6 +18,7 @@ from operate.models.prompts import (
     get_user_first_message_prompt,
     get_user_prompt,
 )
+from operate.models.freellm import FreeLLMManager
 from operate.utils.label import (
     add_labels,
     get_click_position_in_percent,
@@ -61,6 +62,9 @@ async def get_next_action(model, messages, objective, session_id):
         return operation, None
     if model == "claude-3":
         operation = await call_claude_3_with_ocr(messages, objective, model)
+        return operation, None
+    if model == "free-multi-model":
+        operation = await call_free_multi_model(messages, objective, model)
         return operation, None
     raise ModelNotRecognizedException(model)
 
@@ -1058,6 +1062,126 @@ async def call_claude_3_with_ocr(messages, objective, model):
                 )
 
         return gpt_4_fallback(gpt4_messages, objective, model)
+
+
+async def call_free_multi_model(messages, objective, model):
+    """
+    Call free multi-model system with Gemini primary and OpenRouter fallback.
+    Uses OCR for click operations like other vision models.
+    """
+    if config.verbose:
+        print("[call_free_multi_model]")
+
+    try:
+        time.sleep(1)
+
+        # Initialize the free LLM manager (will use env vars for keys)
+        llm_manager = FreeLLMManager()
+
+        confirm_system_prompt(messages, objective, model)
+        screenshots_dir = "screenshots"
+        if not os.path.exists(screenshots_dir):
+            os.makedirs(screenshots_dir)
+
+        screenshot_filename = os.path.join(screenshots_dir, "screenshot.png")
+        # Call the function to capture the screen with the cursor
+        capture_screen_with_cursor(screenshot_filename)
+
+        if len(messages) == 1:
+            user_prompt = get_user_first_message_prompt()
+        else:
+            user_prompt = get_user_prompt()
+
+        # Create the full prompt with system context
+        system_prompt = get_system_prompt(model, objective)
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+
+        if config.verbose:
+            print("[call_free_multi_model] full_prompt", full_prompt[:200] + "...")
+
+        # Call the free LLM manager with screenshot
+        response_text = await llm_manager.generate_content_with_fallback(
+            prompt=full_prompt,
+            image_path=screenshot_filename
+        )
+
+        if config.verbose:
+            print("[call_free_multi_model] response_text", response_text[:500] + "...")
+
+        # Clean and parse the JSON response
+        content = clean_json(response_text)
+        content_str = content
+
+        try:
+            content = json.loads(content)
+        except json.JSONDecodeError as e:
+            if config.verbose:
+                print(f"[call_free_multi_model] JSONDecodeError: {e}")
+            # Try to fix common JSON issues
+            content = response_text.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+            content_str = content
+            content = json.loads(content)
+
+        if config.verbose:
+            print("[call_free_multi_model] parsed content", content)
+
+        processed_content = []
+
+        for operation in content:
+            if operation.get("operation") == "click":
+                text_to_click = operation.get("text")
+                if config.verbose:
+                    print("[call_free_multi_model][click] text_to_click", text_to_click)
+
+                # Initialize EasyOCR Reader
+                reader = easyocr.Reader(["en"])
+
+                # Read the screenshot
+                result = reader.readtext(screenshot_filename)
+
+                text_element_index = get_text_element(
+                    result, text_to_click, screenshot_filename
+                )
+                coordinates = get_text_coordinates(
+                    result, text_element_index, screenshot_filename
+                )
+
+                # Add coordinates to content
+                operation["x"] = coordinates["x"]
+                operation["y"] = coordinates["y"]
+
+                if config.verbose:
+                    print("[call_free_multi_model][click] coordinates", coordinates)
+                    print("[call_free_multi_model][click] final operation", operation)
+
+                processed_content.append(operation)
+            else:
+                processed_content.append(operation)
+
+        # Append assistant message to conversation history
+        assistant_message = {"role": "assistant", "content": content_str}
+        messages.append(assistant_message)
+
+        return processed_content
+
+    except Exception as e:
+        print(
+            f"{ANSI_GREEN}[Self-Operating Computer]{ANSI_RED}[{model}] All free LLM providers failed - no response generated {ANSI_RESET}"
+        )
+        if config.verbose:
+            print("[Self-Operating Computer][Operate] error", e)
+            traceback.print_exc()
+
+        # For free-multi-model, don't fallback to paid providers
+        # Instead, raise an exception to indicate complete failure
+        raise Exception(f"All free LLM providers (Gemini/OpenRouter) failed. Check your API keys and network connection. Error: {str(e)}")
 
 
 def get_last_assistant_message(messages):

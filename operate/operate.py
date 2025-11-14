@@ -148,18 +148,27 @@ def operate(operations, model):
         if operate_type == "press" or operate_type == "hotkey":
             keys = operation.get("keys")
             operate_detail = keys
-            operating_system.press(keys)
+            success = operating_system.press(keys)
+            if not success:
+                print(f"{ANSI_RED}[Self-Operating Computer][Error] Press operation failed for keys: {keys}{ANSI_RESET}")
+                return True  # Stop execution on failure
         elif operate_type == "write":
             content = operation.get("content")
             operate_detail = content
-            operating_system.write(content)
+            success = operating_system.write(content)
+            if not success:
+                print(f"{ANSI_RED}[Self-Operating Computer][Error] Write operation failed for content: {content}{ANSI_RESET}")
+                return True  # Stop execution on failure
         elif operate_type == "click":
             x = operation.get("x")
             y = operation.get("y")
             click_detail = {"x": x, "y": y}
             operate_detail = click_detail
 
-            operating_system.mouse(click_detail)
+            success = operating_system.mouse(click_detail)
+            if not success:
+                print(f"{ANSI_RED}[Self-Operating Computer][Error] Click operation failed for coordinates: {click_detail}{ANSI_RESET}")
+                return True  # Stop execution on failure
         elif operate_type == "done":
             summary = operation.get("summary")
 

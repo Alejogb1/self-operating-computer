@@ -150,6 +150,14 @@ class Config:
         )
         self.require_api_key("QWEN_API_KEY", "Qwen API key", model == "qwen-vl")
 
+        # For free-multi-model, we need either Google API keys or OpenRouter keys
+        if model == "free-multi-model":
+            google_keys = bool(os.environ.get("GOOGLE_API_KEYS"))
+            openrouter_keys = bool(os.environ.get("OPENROUTER_API_KEYS"))
+            if not google_keys and not openrouter_keys:
+                print("Warning: free-multi-model requires either GOOGLE_API_KEYS or OPENROUTER_API_KEYS environment variables.")
+                print("The system will attempt to work with available keys, but may have limited functionality.")
+
     def require_api_key(self, key_name, key_description, is_required):
         key_exists = bool(os.environ.get(key_name))
         if self.verbose:
